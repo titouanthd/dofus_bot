@@ -20,7 +20,7 @@ fn main() {
     });
 
     if let Some(window) = dofus_window {
-        let pid = window.owning_application().process_id;
+        let pid = window.owning_application().process_id();
         println!("Found Dofus window: {} (PID: {})", window.title(), pid);
 
         let focus_pid = |p: i32| {
