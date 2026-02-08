@@ -11,3 +11,6 @@ image = "0.24"
 chrono = "0.4"
 rdev = "0.5"
 rand = "0.8"
+tokio = { version = "1", features = ["full"] }
+core-media-rs = "0.3"
+core-video-rs = "0.3"
