@@ -1,4 +1,7 @@
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::process::Command;
+use std::thread;
+use std::time::Duration;
 use chrono::Local;
 use eframe::egui;
 use screencapturekit::shareable_content::SCShareableContent;
@@ -41,6 +44,7 @@ fn main() -> eframe::Result<()> {
 
 struct MyBotApp {
     target_window_name: String,
+    target_window_pid: Option<i32>,
     window_resolution: String,
     logs: Vec<LogMessage>,
     log_receiver: Receiver<LogMessage>,
@@ -52,6 +56,7 @@ impl MyBotApp {
     fn new(tx: Sender<LogMessage>, rx: Receiver<LogMessage>) -> Self {
         Self {
             target_window_name: "Not Scanned".to_owned(),
+            target_window_pid: None,
             window_resolution: "0x0".to_owned(),
             logs: Vec::new(),
             log_receiver: rx,
@@ -69,6 +74,31 @@ impl MyBotApp {
         });
     }
 
+    fn focus_window_by_pid(&self, pid: i32) {
+        let script = format!(
+            "tell application \"System Events\" to set frontmost of first process whose unix id is {} to true",
+            pid
+        );
+        let _ = Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .output();
+    }
+
+    fn focus_dofus_window(&self) {
+        if let Some(pid) = self.target_window_pid {
+            self.log("Focusing Dofus window...", LogLevel::Info);
+            self.focus_window_by_pid(pid);
+        } else {
+            self.log("Cannot focus Dofus: Window not found.", LogLevel::Warning);
+        }
+    }
+
+    fn focus_bot_window(&self) {
+        self.log("Focusing Bot window...", LogLevel::Info);
+        self.focus_window_by_pid(std::process::id() as i32);
+    }
+
     fn find_dofus_window(&mut self) {
         self.log("Scanning for Dofus window...", LogLevel::Info);
         if let Ok(content) = SCShareableContent::get() {
@@ -79,10 +109,12 @@ impl MyBotApp {
 
             if let Some(window) = dofus_window {
                 self.target_window_name = window.title();
+                self.target_window_pid = Some(window.owning_application().process_id);
                 self.window_resolution = format!("ID: {}", window.window_id());
-                self.log(&format!("Found window: {}", self.target_window_name), LogLevel::Success);
+                self.log(&format!("Found window: {} (PID: {})", self.target_window_name, self.target_window_pid.unwrap()), LogLevel::Success);
             } else {
                 self.target_window_name = "Dofus not found".to_string();
+                self.target_window_pid = None;
                 self.log("Dofus window not found.", LogLevel::Warning);
             }
         } else {
@@ -121,6 +153,48 @@ impl eframe::App for MyBotApp {
 
                     if ui.button("Scan for Dofus").clicked() {
                         self.find_dofus_window();
+                    }
+
+                    ui.add_space(10.0);
+
+                    if ui.button("Test Focus Sequence (5s delay)").clicked() {
+                        let tx = self.log_tx.clone();
+                        let pid = self.target_window_pid;
+                        let bot_pid = std::process::id() as i32;
+
+                        thread::spawn(move || {
+                            let log = |msg: &str, level: LogLevel| {
+                                let timestamp = Local::now().format("%H:%M:%S").to_string();
+                                let _ = tx.send(LogMessage {
+                                    timestamp,
+                                    level,
+                                    message: msg.to_string(),
+                                });
+                            };
+
+                            let focus_pid = |pid: i32| {
+                                let script = format!(
+                                    "tell application \"System Events\" to set frontmost of first process whose unix id is {} to true",
+                                    pid
+                                );
+                                let _ = Command::new("osascript")
+                                    .arg("-e")
+                                    .arg(script)
+                                    .output();
+                            };
+
+                            if let Some(p) = pid {
+                                log("Test: Focusing Dofus in 5s...", LogLevel::Info);
+                                thread::sleep(Duration::from_secs(5));
+                                focus_pid(p);
+                                log("Test: Dofus focused. Focusing Bot in 5s...", LogLevel::Info);
+                                thread::sleep(Duration::from_secs(5));
+                                focus_pid(bot_pid);
+                                log("Test: Bot focused. Sequence complete.", LogLevel::Success);
+                            } else {
+                                log("Test: Dofus PID not found. Scan first.", LogLevel::Warning);
+                            }
+                        });
                     }
                 }
                 Tab::Logs => {
