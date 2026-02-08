@@ -24,8 +24,8 @@ impl VisionEngine {
             });
 
             if let Some(window) = dofus_window {
-                self.target_window_name = window.title();
-                self.target_window_pid = Some(window.owning_application().process_id);
+                self.target_window_name = window.title().to_string();
+                self.target_window_pid = Some(window.owning_application().process_id());
                 self.window_resolution = format!("ID: {}", window.window_id());
                 Ok(format!("Found window: {} (PID: {})", self.target_window_name, self.target_window_pid.unwrap()))
             } else {

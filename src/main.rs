@@ -38,78 +38,23 @@ struct MyBotApp {
 impl MyBotApp {
     fn new(tx: Sender<LogMessage>, rx: Receiver<LogMessage>) -> Self {
         Self {
-            engine: BotEngine::new(tx),
+            // The Engine takes ownership of the Sender to log events
+            engine: BotEngine::new(tx), 
             logs: Vec::new(),
             log_receiver: rx,
             current_tab: Tab::Vision,
-        }
-    }
-
-    fn log(&self, message: &str, level: LogLevel) {
-        let timestamp = Local::now().format("%H:%M:%S").to_string();
-        let _ = self.log_tx.send(LogMessage {
-            timestamp,
-            level,
-            message: message.to_string(),
-        });
-    }
-
-    fn focus_window_by_pid(&self, pid: i32) {
-        let script = format!(
-            "tell application \"System Events\" to set frontmost of first process whose unix id is {} to true",
-            pid
-        );
-        let _ = Command::new("osascript")
-            .arg("-e")
-            .arg(script)
-            .output();
-    }
-
-    fn focus_dofus_window(&self) {
-        if let Some(pid) = self.target_window_pid {
-            self.log("Focusing Dofus window...", LogLevel::Info);
-            self.focus_window_by_pid(pid);
-        } else {
-            self.log("Cannot focus Dofus: Window not found.", LogLevel::Warning);
-        }
-    }
-
-    fn focus_bot_window(&self) {
-        self.log("Focusing Bot window...", LogLevel::Info);
-        self.focus_window_by_pid(std::process::id() as i32);
-    }
-
-    fn find_dofus_window(&mut self) {
-        self.log("Scanning for Dofus window...", LogLevel::Info);
-        if let Ok(content) = SCShareableContent::get() {
-            // We find the window that contains Dofus
-            let dofus_window = content.windows().into_iter().find(|w| {
-                w.title().contains("Dofus")
-            });
-
-            if let Some(window) = dofus_window {
-                self.target_window_name = window.title();
-                self.target_window_pid = Some(window.owning_application().process_id());
-                self.window_resolution = format!("ID: {}", window.window_id());
-                self.log(&format!("Found window: {} (PID: {})", self.target_window_name, self.target_window_pid.unwrap()), LogLevel::Success);
-            } else {
-                self.target_window_name = "Dofus not found".to_string();
-                self.target_window_pid = None;
-                self.log("Dofus window not found.", LogLevel::Warning);
-            }
-        } else {
-            self.log("Failed to get shareable content.", LogLevel::Error);
         }
     }
 }
 
 impl eframe::App for MyBotApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Drain logs
+        // 1. Drain logs from the channel
         while let Ok(msg) = self.log_receiver.try_recv() {
             self.logs.push(msg);
         }
 
+        // 2. Top Navigation Bar
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.current_tab, Tab::Vision, "Vision");
@@ -117,12 +62,14 @@ impl eframe::App for MyBotApp {
             });
         });
 
+        // 3. Main Content
         egui::CentralPanel::default().show(ctx, |ui| {
             match self.current_tab {
                 Tab::Vision => {
                     ui.heading("Dofus Unity Vision");
                     ui.separator();
 
+                    // Access data through the Engine -> Vision module
                     ui.label("Detected Window:");
                     ui.colored_label(egui::Color32::LIGHT_BLUE, &self.engine.vision.target_window_name);
 
@@ -131,6 +78,7 @@ impl eframe::App for MyBotApp {
 
                     ui.add_space(20.0);
 
+                    // Call methods on the Engine, not self
                     if ui.button("Scan for Dofus").clicked() {
                         self.engine.scan_for_window();
                     }
