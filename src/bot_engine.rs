@@ -1,9 +1,11 @@
 use crate::input_manager::InputManager;
 use crate::vision_engine::VisionEngine;
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use chrono::Local;
+use image::RgbaImage;
 
 #[derive(Debug, Clone, Copy)]
 pub enum LogLevel {
@@ -49,6 +51,71 @@ impl BotEngine {
             Ok(msg) => self.log(&msg, LogLevel::Success),
             Err(err) => self.log(&err, LogLevel::Warning),
         }
+    }
+
+    pub fn trigger_mission_proof(&self) {
+        let tx = self.log_tx.clone();
+        let vision_pid = self.vision.target_window_pid;
+        let bot_pid = std::process::id() as i32;
+        let latest_frame = Arc::clone(&self.vision.latest_frame);
+        let frame_size = Arc::clone(&self.vision.frame_size);
+        let input = InputManager::new();
+
+        self.log("Mission Proof requested. Processing async...", LogLevel::Info);
+
+        thread::spawn(move || {
+            let log = |msg: &str, level: LogLevel| {
+                let timestamp = Local::now().format("%H:%M:%S").to_string();
+                let _ = tx.send(LogMessage {
+                    timestamp,
+                    level,
+                    message: msg.to_string(),
+                });
+            };
+
+            if let Some(p) = vision_pid {
+                // 1. Focus Dofus
+                input.focus_window(p);
+
+                // 2. Wait 250ms
+                thread::sleep(Duration::from_millis(250));
+
+                // 3. Pull the current frame
+                let (data, size) = {
+                    let data = latest_frame.lock().unwrap().clone();
+                    let size = *frame_size.lock().unwrap();
+                    (data, size)
+                };
+
+                if data.is_empty() || size.0 == 0 || size.1 == 0 {
+                    log("Mission Proof failed: No frame captured yet.", LogLevel::Error);
+                    return;
+                }
+
+                // 4. Save it
+                let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
+                let dir = "./mission_logs";
+                if let Err(e) = std::fs::create_dir_all(dir) {
+                    log(&format!("Failed to create directory: {}", e), LogLevel::Error);
+                    return;
+                }
+
+                let path = format!("{}/proof_{}.png", dir, timestamp);
+                if let Some(img) = RgbaImage::from_raw(size.0, size.1, data) {
+                    match img.save(&path) {
+                        Ok(_) => log(&format!("Mission Proof saved: {}", path), LogLevel::Success),
+                        Err(e) => log(&format!("Failed to save image: {}", e), LogLevel::Error),
+                    }
+                } else {
+                    log("Failed to create image from raw data.", LogLevel::Error);
+                }
+
+                // 5. Focus back to Bot
+                input.focus_window(bot_pid);
+            } else {
+                log("Mission Proof failed: Dofus window not found. Scan first.", LogLevel::Warning);
+            }
+        });
     }
 
     pub fn focus_dofus(&self) {
